@@ -8,7 +8,7 @@ typedef unsigned long UL;
 
 #define ASSERT(__x) assert(__x)
 
-#define Ctr(T,__c) T * (*__c)(void*)
+#define Ctr(T,__c) T * (*__c)(size_t n, ...)
 #define Cpy(T,__p) T * (*__p)(T*)
 #define Dtr(T,__d) void (*__d)(T**)
 
@@ -89,7 +89,6 @@ T##List * CtrList##T(size_t n, ...) {	\
 		(*next)->data=		\
 			va_arg(list,T*);\
 		(*next)->next = NULL;	\
-		printf("data: %p\n", (*next)->data);\
 		next = &(*next)->next;	\
 	}				\
 	va_end(list);			\
@@ -98,13 +97,25 @@ T##List * CtrList##T(size_t n, ...) {	\
 void DtrList##T(T##List ** old)	{	\
 	ASSERT(old);			\
 	T##List *tmp, *head = *old;	\
-	while (head) {			\
-		tmp=head->next;		\
+	while (head && head->data) {	\
 		Rm(head->data);		\
+		tmp=head->next;		\
 		free(head);		\
 		head=tmp;		\
 	}				\
 	*old = NULL;			\
+}					\
+T * GetList##T(T##List * l, size_t n) {  \
+	size_t i = 0;			\
+	T##List * p = l;		\
+	while (p && i<= n) {		\
+		if (i == n) {		\
+			return p->data; \
+		}			\
+		p = p->next;		\
+		++i;			\
+	}				\
+	return NULL;			\
 }
 
 #define for_each(T, __it, list) 	\
@@ -117,6 +128,7 @@ void DtrList##T(T##List ** old)	{	\
 
 #define MkList(T) CtrList##T
 #define RmList(T) DtrList##T
+#define GL(T) GetList##T
 
 #define _st(T) struct _##T
 
@@ -146,8 +158,8 @@ void DefDtr(T)(T ** old) {		\
 	free(*old);			\
 	old = NULL;			\
 }					\
-T* DefCtr(T)(void*_) {			\
-	T * new;(void)_;		\
+T* DefCtr(T)(size_t n, ...) {		\
+	T * new;(void)n;		\
 	if (!(new=malloc(sizeof(T)))) { \
 		return NULL;		\
 	}				\
@@ -167,7 +179,7 @@ DefineList(T)
 #define DefArrSize 32
 
 #define CtrBoiler(T)			\
-	if (!(new = DefCtr(T)(arg))) {  \
+	if (!(new = DefCtr(T)(n))) {  	\
 		return NULL;		\
 	}				\
 
@@ -181,41 +193,50 @@ Struct(Ed,
 );
 
 
-Ed * EdCtr(void * arg) {
+Ed * EdCtr(size_t n, ...) {
 	Ed * new;
+	//
+	// data can default to 0 but everything else must be provided
+	if (n != 3 && n != 4) {
+		printf("%s: bad argc\n", __func__);
+		return NULL;
+	}
+	va_list list;
 	CtrBoiler(Ed);
-	
-	UL * data = (UL *)arg;
 
-	new->from 	= data[0];
-	new->to 	= data[1];
-	new->key 	= data[2];
-	new->data 	= data[3];
+
+	va_start(list, n);
+	
+	new->from 	= va_arg(list, UL);
+	new->to 	= va_arg(list, UL);
+	new->key 	= va_arg(list, UL);
+	new->data 	= n != 4
+			? 0
+			: va_arg(list, UL);
+
+	va_end(list);
 
 	return new;
 }
 #define MkEd EdCtr
-
-struct EdPreInit {
-	union {
-		UL data[6];
-		struct {
-			UL head[2];
-			Ed e;
-		};
-	};
-};
 
 // Vertex
 Struct(Vr,
 	UL id;
 );
 
-Vr * VrCtr(void * arg) {
+Vr * VrCtr(size_t n, ...) {
 	Vr * new;
+	va_list list;
+
+	// nothing but ID
+	if (n != 1) return NULL;
+
 	CtrBoiler(Vr);
 
-	new->id = (UL)arg;
+	va_start(list, n);
+	new->id = va_arg(list, UL);
+	va_end(list);
 	
 	return new;
 }
@@ -223,33 +244,146 @@ Vr * VrCtr(void * arg) {
 
 // Graph
 Struct(Gr,
-	Vr * v;
-	Ed * e;
+	VrList * v;
+	EdList * e;
+	UL vl;
+	Vr ** vm;
 );
 
-Gr * GrCtr(void * arg) {
+void GrDtr(Gr ** old) {
+	RmList(Ed)(&(*old)->e);
+	RmList(Vr)(&(*old)->v);
+	free((*old)->vm); (*old)->vm = NULL;
+	DefDtr(Gr)(old);
+}
+
+Gr * GrCtr(size_t n, ...) {
 	Gr * new;
+	va_list list;
+
 	CtrBoiler(Gr);
 
-	new->v = (Vr *)arg;
-	new->e = (Ed *)(arg + sizeof(Vr*));
+	va_start(list, n);
+	new->v = va_arg(list, VrList *);
+	new->e = va_arg(list, EdList *);
+	va_end(list);
+
+	Vr * v;
+	new->vl = 0;
+	for_each(Vr, v, new->v) {
+		if (v->id > new->vl) {
+			new->vl = v->id;
+		}
+	}
+
+
+	new->vm = (Vr **)malloc(sizeof(Vr *) * new->vl + 1);
+	if (!new->vm) {
+		free(new); return NULL;
+	}
+	for_each(Vr, v, new->v) {
+		printf("id: %lu\n", v->id);
+		new->vm[v->id] = v;
+	}
+
+	new->_d = GrDtr;
 
 	return new;
 }
+#define MkGr GrCtr
 
-#define MKGr GrCtr
+Vr * Gr_v(Gr * g, UL d) {
+	if (d <= 0 || d > g->vl) {
+		return NULL;
+	}
+	return g->vm[d];
+}
+
 
 
 // Tape
 Struct(Tp,
-	int tmp ;
+	UL * t;
+	size_t n;
 );
 
 // State machine
 Struct(Sm,
-	Gr g;
+	Gr * g;
+	UL l;
 	Vr * s;
+	Vr * c;
+
+	struct ekv {
+		Vr * n;
+		UL d;
+	} *m;
+
 );
+
+void SmDtr(Sm ** old) {
+	Rm((*old)->g);
+	free((*old)->m);
+	DefDtr(Sm)(old);
+}
+
+// graph, state alphabet max, start state
+Sm * SmCtr(size_t n, ...) {
+	Sm * new;
+	va_list list;
+
+	if (n != 3) {
+		printf("%s: bad argc\n", __func__);
+		return NULL;
+	}
+
+	CtrBoiler(Sm);
+
+	va_start(list, n);
+
+	new->g = va_arg(list, Gr *);
+	new->l = va_arg(list, UL);
+	UL sid = va_arg(list, UL);
+	new->s = Gr_v(new->g, sid);
+
+	va_end(list);
+
+	new->c = new->s;
+
+	// l by l edgemap (from l vertices we have l edges)
+	new->m = (struct ekv *)malloc(sizeof(struct ekv) * new->l * new->l);
+	if (!new->m) {
+		free(new); new = NULL;
+	}
+
+	memset(new->m, 0, sizeof(struct ekv) * new->l * new->l);
+
+	Ed * e;
+	for_each(Ed, e, new->g->e) {
+		*(new->m + new->c->id * new->l + e->key) = (struct ekv){
+			.n = Gr_v(new->g, e->to), .d = e->data};
+	}
+
+
+	new->_d = SmDtr;
+
+	return new;
+}
+#define  MkSm SmCtr
+
+UL Sm_do(Sm * s, UL d) {
+	// must be positive int not greater than limit
+	if (d <= 0 || d > s->l) {
+		return 0;
+	}
+
+	struct ekv * next;
+
+	next = s->m + s->c->id * s->l * sizeof(struct ekv) + d * sizeof(struct ekv);
+
+	s->c = next->n;
+	return next->d;
+}
 
 // Turing machine
 Struct(Tm,
@@ -257,34 +391,34 @@ Struct(Tm,
 	Sm s;
 );
 
+
 int main(void) {
 	printf("hello world\n");
 
 	Tm * t = MkTm(NULL);
 	Tm * q = Cp(t);
 
-	UL data[2][4] = {
-		{1,2,3,4},
-		{5,6,7,8},};
+	Ed * e3 = MkEd(4,3,3,3,3);
+	Rm(e3);
 
-	/* Ed2 */
-
-	/* Ed * ea = MkArr(Ed)(2, MkEd(data[0]), MkEd(data[1])); */
-
-	EdList * el = MkList(Ed)(2, MkEd(data[0]), MkEd(data[1]));
+	EdList * el = MkList(Ed)(2, MkEd(4,1,2,3,4), MkEd(4,5,6,7,8));
 			
-	/* VrArr va = CtrArrVr(2); */
-
-	/* Ed * e = MkEd((void*)edge); */
-
 	Ed * ea;
 	for_each(Ed, ea, el) {
 		printf("e: from %lu on %lu goto %lu do %lu\n", ea->from, ea->key, ea->to, ea->data);
 	}
 
-	/* Rm(e); */
+	VrList * vl = MkList(Vr)(2, MkVr(1,5), MkVr(1,6));
 
-	RmList(Ed)(&el);
+	Gr * g = MkGr(2, vl, el);
+
+	Sm * s = MkSm(3, g, 7, 1);
+
+	/* Rm(g); */
+
+	Rm(s);
+
+	/* RmList(Ed)(&el); */
 
 	Rm(t);
 	Rm(q);
