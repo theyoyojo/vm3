@@ -220,40 +220,14 @@ Ed * EdCtr(size_t n, ...) {
 }
 #define MkEd EdCtr
 
-// Vertex
-Struct(Vr,
-	UL id;
-);
-
-Vr * VrCtr(size_t n, ...) {
-	Vr * new;
-	va_list list;
-
-	// nothing but ID
-	if (n != 1) return NULL;
-
-	CtrBoiler(Vr);
-
-	va_start(list, n);
-	new->id = va_arg(list, UL);
-	va_end(list);
-	
-	return new;
-}
-#define MkVr VrCtr
-
 // Graph
 Struct(Gr,
-	VrList * v;
+	UL v;
 	EdList * e;
-	UL vl;
-	Vr ** vm;
 );
 
 void GrDtr(Gr ** old) {
 	RmList(Ed)(&(*old)->e);
-	RmList(Vr)(&(*old)->v);
-	free((*old)->vm); (*old)->vm = NULL;
 	DefDtr(Gr)(old);
 }
 
@@ -264,40 +238,15 @@ Gr * GrCtr(size_t n, ...) {
 	CtrBoiler(Gr);
 
 	va_start(list, n);
-	new->v = va_arg(list, VrList *);
+	new->v = va_arg(list, UL);
 	new->e = va_arg(list, EdList *);
 	va_end(list);
-
-	Vr * v;
-	new->vl = 0;
-	for_each(Vr, v, new->v) {
-		if (v->id > new->vl) {
-			new->vl = v->id;
-		}
-	}
-
-
-	new->vm = (Vr **)malloc(sizeof(Vr *) * new->vl + 1);
-	if (!new->vm) {
-		free(new); return NULL;
-	}
-	for_each(Vr, v, new->v) {
-		printf("id: %lu\n", v->id);
-		new->vm[v->id] = v;
-	}
 
 	new->_d = GrDtr;
 
 	return new;
 }
 #define MkGr GrCtr
-
-Vr * Gr_v(Gr * g, UL d) {
-	if (d <= 0 || d > g->vl) {
-		return NULL;
-	}
-	return g->vm[d];
-}
 
 
 
@@ -310,16 +259,16 @@ Struct(Tp,
 // State machine
 Struct(Sm,
 	Gr * g;
-	UL l;
-	Vr * s;
-	Vr * c;
+	UL p;
 
 	struct ekv {
-		Vr * n;
+		UL v;
 		UL d;
 	} *m;
 
 );
+
+#define EMAP(_s, _v, _k) ((_s->m) + (_s->g->v + 1) * (_v) + (_k))
 
 void SmDtr(Sm ** old) {
 	Rm((*old)->g);
@@ -327,10 +276,11 @@ void SmDtr(Sm ** old) {
 	DefDtr(Sm)(old);
 }
 
-// graph, state alphabet max, start state
+// graph, start state
 Sm * SmCtr(size_t n, ...) {
 	Sm * new;
 	va_list list;
+	size_t i, j;
 
 	if (n != 3) {
 		printf("%s: bad argc\n", __func__);
@@ -340,28 +290,29 @@ Sm * SmCtr(size_t n, ...) {
 	CtrBoiler(Sm);
 
 	va_start(list, n);
-
 	new->g = va_arg(list, Gr *);
-	new->l = va_arg(list, UL);
-	UL sid = va_arg(list, UL);
-	new->s = Gr_v(new->g, sid);
-
+	new->p = va_arg(list, UL);
 	va_end(list);
 
-	new->c = new->s;
+	// allow for transition to zero on error/bottom/whatever
+	UL vl = new->g->v + 1;
 
 	// l by l edgemap (from l vertices we have l edges)
-	new->m = (struct ekv *)malloc(sizeof(struct ekv) * new->l * new->l);
+	new->m = (struct ekv *)malloc(sizeof(struct ekv) * (vl * vl));
 	if (!new->m) {
 		free(new); new = NULL;
 	}
 
-	memset(new->m, 0, sizeof(struct ekv) * new->l * new->l);
+	memset(new->m, 0, sizeof(struct ekv) * vl * vl);
+	for (i = 1; i <= new->g->v; ++i) for (j = 0; j <= new->g->v; ++j) {
+		// default transition is self loop
+		EMAP(new, i, j)->v = i;
+	}
 
 	Ed * e;
 	for_each(Ed, e, new->g->e) {
-		*(new->m + new->c->id * new->l + e->key) = (struct ekv){
-			.n = Gr_v(new->g, e->to), .d = e->data};
+		/* *(new->m + sizeof(struct ekv) * new->p * new->l + sizeof(struct ekv) * e->key) = (struct ekv){ */
+		*EMAP(new, e->from, e->key) = (struct ekv){.v = e->to, .d = e->data};
 	}
 
 
@@ -373,16 +324,37 @@ Sm * SmCtr(size_t n, ...) {
 
 UL Sm_do(Sm * s, UL d) {
 	// must be positive int not greater than limit
-	if (d <= 0 || d > s->l) {
+	if (d <= 0 || d > s->g->v) {
 		return 0;
 	}
 
 	struct ekv * next;
 
-	next = s->m + s->c->id * s->l * sizeof(struct ekv) + d * sizeof(struct ekv);
+	/* next = s->m + s->p * s->l * sizeof(struct ekv) + d * sizeof(struct ekv); */
 
-	s->c = next->n;
+	next = EMAP(s, s->p, d);
+
+	s->p = next->v;
 	return next->d;
+}
+
+#define _1K (1 << 10)
+char buf[_1K];
+char * Sm_str(Sm * s) {
+	size_t i, j, cnt = 0;
+	struct ekv * tmp;
+	cnt += sprintf(buf, "Sm.p=%lu\n", s->p);
+
+	for (i = 1; i <= s->g->v; ++i) {
+		cnt += sprintf(buf + cnt, "[%lu] ", i);
+		for (j = 1; j <= s->g->v; ++j) {
+			tmp = EMAP(s, i, j);
+			cnt += sprintf(buf + cnt, "%lu->(%lu, %lu) ", j, tmp->v, tmp->d);
+		}
+		cnt += sprintf(buf + cnt, "\n");
+	}
+
+	return buf;
 }
 
 // Turing machine
@@ -408,11 +380,17 @@ int main(void) {
 		printf("e: from %lu on %lu goto %lu do %lu\n", ea->from, ea->key, ea->to, ea->data);
 	}
 
-	VrList * vl = MkList(Vr)(2, MkVr(1,5), MkVr(1,6));
+	UL vmax = 6;
+	Gr * g = MkGr(2, vmax, el);
 
-	Gr * g = MkGr(2, vl, el);
+	Sm * s = MkSm(3, g, 1);
 
-	Sm * s = MkSm(3, g, 7, 1);
+	printf("%s\n", Sm_str(s));
+
+	UL x = Sm_do(s, 3);
+	printf("got: %lu\n", x);
+
+	printf("%s\n", Sm_str(s));
 
 	/* Rm(g); */
 
