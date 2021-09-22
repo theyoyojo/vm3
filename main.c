@@ -259,6 +259,7 @@ Struct(Tp,
 // State machine
 Struct(Sm,
 	Gr * g;
+	UL s;
 	UL p;
 
 	struct ekv {
@@ -291,7 +292,7 @@ Sm * SmCtr(size_t n, ...) {
 
 	va_start(list, n);
 	new->g = va_arg(list, Gr *);
-	new->p = va_arg(list, UL);
+	new->s = new->p = va_arg(list, UL);
 	va_end(list);
 
 	// allow for transition to zero on error/bottom/whatever
@@ -357,6 +358,88 @@ char * Sm_str(Sm * s) {
 	return buf;
 }
 
+// Deterministic Finite Automaton
+Struct (Df,
+	Sm * s;
+	const char * n;
+	UL a;
+);
+// realistically when will I need more than 64-1 states? I can always change this later
+
+UL Df_mkmask(UL * a, size_t n) {
+	size_t i;
+	UL res = 0;
+	for (i = 0; i < n; i++) {
+		if (a[i] > sizeof(UL) * 8) {
+			return -1;
+		}
+		res |= 1 << a[i];
+	}
+	return res;
+}
+
+int Df_run(Df * d, UL * s, size_t n) {
+	size_t i;
+	int res;
+	UL p, _;
+
+	printf("RUN DFA %s\n", d->n);
+	d->s->p = d->s->s;
+	for (i = 0; i < n; ++i) {
+		p = d->s->p;
+		_ = Sm_do(d->s, s[i]);
+		printf("delta(%lu, %lu) = (%lu, %lu)\n", p, s[i],d->s->p, _);
+	}
+
+	// check for accept state
+	res = !!(d->a & (1 << d->s->p));
+	printf("%s\n", res ? "ACCEPT" : "REJECT");
+	return res;
+}
+
+void DfDtr(Df ** old) {
+	Rm((*old)->s);
+	DefDtr(Df)(old);
+}
+
+// state machine, name, acceptmask
+Df * DfCtr(size_t n, ...) {
+	va_list list;
+	Df * new;
+
+	if (n != 3) {
+		printf("%s: bad argc\n", __func__);
+		return NULL;
+	}
+	CtrBoiler(Df);
+
+	va_start(list, n);
+	new->s = va_arg(list, Sm *);
+	new->n = va_arg(list, const char *);
+	new->a = va_arg(list, UL);
+	va_end(list);
+
+	new->_d = DfDtr;
+
+	return new;
+}
+
+#define MkDf DfCtr
+
+struct ekvl;
+struct ekvl {
+	struct ekv data;
+	struct ekvl * next;
+};
+
+// Nondeterministic Finite Automaton
+Struct(Nf,
+	Sm * s;
+	struct ekvl * o;
+	const char * name;
+	UL a;
+);
+
 // Turing machine
 Struct(Tm,
 	Tp t;
@@ -365,36 +448,44 @@ Struct(Tm,
 
 
 int main(void) {
-	printf("hello world\n");
-
 	Tm * t = MkTm(NULL);
 	Tm * q = Cp(t);
 
 	Ed * e3 = MkEd(4,3,3,3,3);
 	Rm(e3);
 
-	EdList * el = MkList(Ed)(2, MkEd(4,1,2,3,4), MkEd(4,5,6,7,8));
+	EdList * el = MkList(Ed)(2,
+			MkEd(4,1,2,1,1),
+			MkEd(4,2,1,1,1)
+	);
 			
-	Ed * ea;
-	for_each(Ed, ea, el) {
-		printf("e: from %lu on %lu goto %lu do %lu\n", ea->from, ea->key, ea->to, ea->data);
-	}
+	/* Ed * ea; */
+	/* for_each(Ed, ea, el) { */
+	/* 	printf("e: from %lu on %lu goto %lu do %lu\n", ea->from, ea->key, ea->to, ea->data); */
+	/* } */
 
-	UL vmax = 6;
+	UL vmax = 2;
 	Gr * g = MkGr(2, vmax, el);
 
 	Sm * s = MkSm(3, g, 1);
 
 	printf("%s\n", Sm_str(s));
 
-	UL x = Sm_do(s, 3);
-	printf("got: %lu\n", x);
+	/* UL x = Sm_do(s, 3); */
+	/* printf("got: %lu\n", x); */
 
-	printf("%s\n", Sm_str(s));
+	/* printf("%s\n", Sm_str(s)); */
+
+	UL accept = 2;
+	Df * d = MkDf(3, s, "test", Df_mkmask(&accept, 1));
+
+	UL input[] = {1, 2, 2};
+	/* UL input[] = {1, 1, 2}; */
+	Df_run(d, input, 3);
 
 	/* Rm(g); */
 
-	Rm(s);
+	Rm(d);
 
 	/* RmList(Ed)(&el); */
 
