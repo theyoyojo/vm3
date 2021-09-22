@@ -267,9 +267,10 @@ Struct(Sm,
 		UL d;
 	} *m;
 
+	struct ekvl ** alt;
 );
 
-#define EMAP(_s, _v, _k) ((_s->m) + (_s->g->v + 1) * (_v) + (_k))
+#define EMAP(_s, _v, _k) (((_s)->m) + ((_s)->g->v + 1) * (_v) + (_k))
 
 void SmDtr(Sm ** old) {
 	Rm((*old)->g);
@@ -339,6 +340,14 @@ UL Sm_do(Sm * s, UL d) {
 	return next->d;
 }
 
+struct ekvl;
+// list of edge key-value pairs to use as alternative transitions
+struct ekvl {
+	struct ekv data;
+	struct ekvl * next;
+};
+char * ekvl_str(struct ekvl * ekvl);
+
 #define _1K (1 << 10)
 char buf[_1K];
 char * Sm_str(Sm * s) {
@@ -349,8 +358,13 @@ char * Sm_str(Sm * s) {
 	for (i = 1; i <= s->g->v; ++i) {
 		cnt += sprintf(buf + cnt, "[%lu] ", i);
 		for (j = 1; j <= s->g->v; ++j) {
-			tmp = EMAP(s, i, j);
-			cnt += sprintf(buf + cnt, "%lu->(%lu, %lu) ", j, tmp->v, tmp->d);
+			if (!s->alt) {
+				tmp = EMAP(s, i, j);
+				cnt += sprintf(buf + cnt, "%lu->(%lu, %lu) ", j, tmp->v, tmp->d);
+			} else {
+				cnt += sprintf(buf + cnt, "%lu->%s ", j, ekvl_str(
+					*(s->alt + i * (s->g->v + 1) + j)));
+			}
 		}
 		cnt += sprintf(buf + cnt, "\n");
 	}
@@ -378,10 +392,16 @@ UL Df_mkmask(UL * a, size_t n) {
 	return res;
 }
 
+// 0 accept
 int Df_run(Df * d, UL * s, size_t n) {
 	size_t i;
 	int res;
 	UL p, _;
+
+	if (n < 1) {
+		// if empty input, accept if start is an accept state
+		return !(d->a & (1 << d->s->s));
+	}
 
 	printf("RUN DFA %s\n", d->n);
 	d->s->p = d->s->s;
@@ -392,8 +412,8 @@ int Df_run(Df * d, UL * s, size_t n) {
 	}
 
 	// check for accept state
-	res = !!(d->a & (1 << d->s->p));
-	printf("%s\n", res ? "ACCEPT" : "REJECT");
+	res = !(d->a & (1 << d->s->p));
+	printf("%s\n", !res ? "ACCEPT" : "REJECT");
 	return res;
 }
 
@@ -426,19 +446,303 @@ Df * DfCtr(size_t n, ...) {
 
 #define MkDf DfCtr
 
-struct ekvl;
-struct ekvl {
-	struct ekv data;
-	struct ekvl * next;
+// NFA parse tree
+struct pt;
+struct pt {
+	UL c;
+	UL d;
+	struct pt ** kids;
+	struct pt * parent;
+	size_t kidcount;
+	size_t kidcap;
 };
 
+#define KIDCAP_DEFAULT 8
+
+struct altv {
+	UL c;
+	struct pt ** t;
+};
+
+#define ALTVLEN 64
 // Nondeterministic Finite Automaton
 Struct(Nf,
-	Sm * s;
-	struct ekvl * o;
-	const char * name;
-	UL a;
+	Df * d;
+	struct ekvl ** o;
+	struct pt * t;
+	struct altv altv[2][ALTVLEN]; // unlikely/impossible to be in more than 64 states at once
+	size_t altc[2];
 );
+
+// 0 accept
+int Nf_run(Nf * nf, UL *s, size_t n) {
+	if (n < 1) {
+		// if empty input, accept if start is an accept state
+		return !(nf->d->a & (1 << nf->d->s->s));
+	}
+
+	int res, xXx = 0;
+	size_t i, j;
+	struct ekvl * possible, *trans;
+	struct altv * new;
+	struct pt * curr, *root = (struct pt *)malloc(sizeof(struct pt));
+
+	if (!root) {
+		return 0;
+	}
+	root->c = s[0];
+	root->d = 0;
+	root->parent = NULL;
+	root->kidcap = KIDCAP_DEFAULT;
+	root->kids = (struct pt **)malloc(sizeof(struct pt *) * root->kidcap);
+	if (!root->kids) {
+		return -1;
+	}
+	root->kidcount = 0;
+
+	/* curr = root; */
+	memset(nf->altv, 0, 2 * ALTVLEN * sizeof(struct altv));
+	nf->altv[xXx][0].c = s[0];
+	nf->altv[xXx][0].t = &root;
+	nf->altc[xXx] = 1;
+	nf->altc[xXx ^ 1] = 0;
+	
+	printf("RUN NFA %s\n", nf->d->n);
+
+	size_t vl = nf->d->s->g->v + 1;
+	// loop through string
+	for (i = 0; i < n; ++i) {
+		// loop through alternate states/tree branches
+		for (j = 0; j < nf->altc[xXx]; ++j) {
+			// get current tree to append to
+			curr = *nf->altv[xXx][j].t;
+			// loop through possible transitions
+			possible = nf->o[nf->altv[xXx][j].c * vl + curr->c];
+			for (trans = possible; trans; trans = trans->next) {
+				// write next state and tree node to here
+				new = &nf->altv[xXx ^ 1][nf->altc[xXx ^ 1]];
+				// one of the possible next vertices
+				new->c = trans->data.v;
+
+				// renovate house for birth of new kids
+				if (curr->kidcap == curr->kidcount) {
+					curr->kidcap *= 2;
+					curr->kids = (struct pt **)realloc(curr->kids, curr->kidcap);
+					if (!curr->kids) {
+						return -1;
+					}
+				}
+
+				// add a new child to the current tree and reference it in the new altv
+				if (!(curr->kids[curr->kidcount] =
+							(struct pt *)malloc(sizeof(struct pt)))) {
+					// panic!
+					return -1;
+				}
+				new->t = &curr->kids[curr->kidcount++];
+				(*new->t)->parent = curr;
+				(*new->t)->kidcap = KIDCAP_DEFAULT;
+				(*new->t)->kids = (struct pt **)malloc(sizeof(struct pt *)
+						* (*new->t)->kidcap);
+				(*new->t)->kidcount = 0;
+				(*new->t)->c = trans->data.v;
+				(*new->t)->d = trans->data.d;
+
+				++nf->altc[xXx ^ 1];
+			}
+			// reset current alt{v,c}
+			memset(nf->altv + xXx, 0, ALTVLEN * sizeof(struct altv));
+			nf->altc[xXx] = 0;
+			xXx ^= 1; //switch alt{v,c} to the other one
+		}
+	}
+
+	res = 1;
+	for (i = 0; i < nf->altc[xXx]; ++i) {
+		if (!(nf->d->a & (1 << nf->altv[xXx][i].c))) {
+			res = 0;
+		}
+	}
+
+	nf->t = root;
+
+	printf("%s\n", res ? "ACCEPT" : "REJECT");
+	return res;
+}
+
+
+int ekvl_append(struct ekvl ** l, struct ekv d) {
+	struct ekvl **p, *new = (struct ekvl *)malloc(sizeof(struct ekvl));
+	if (!new) {
+		return -1;
+	}
+	
+	p = l;
+	while (*p) {
+		p = &(*p)->next;
+	}
+	new->data = d;
+	*p = new;
+	return 0;
+}
+
+// arbitary number of edges (consoooms the edge)
+struct ekvl ** Df_mkekvl(Df * d, size_t n, ...) {
+	struct ekvl ** new;
+	Ed * e;
+	va_list list;
+	size_t i;
+
+	size_t vl = d->s->g->v + 1;
+	new = (struct ekvl **)malloc(sizeof(struct ekvl *) * vl * vl);
+	if (!new) {
+		return NULL;
+	}
+	memset(new, 0, sizeof(struct ekvl *) * vl * vl);
+	va_start(list, n);
+	for (i = 1; i <= n; ++i) {
+		e = va_arg(list, Ed *);
+		ekvl_append(new + e->from * vl + e->key, (struct ekv){ .v = e->to, .d = e->data});
+		Rm(e);
+	}
+	va_end(list);
+
+	return new;
+}
+
+char * ekvl_str(struct ekvl * ekvl) {
+	static char buf[_1K];
+	struct ekvl * p;
+	size_t cnt = 0;
+
+	cnt += sprintf(buf, "{");
+	p = ekvl;
+	while (p) {
+		cnt += sprintf(buf + cnt, "(%lu, %lu)%s", p->data.v, p->data.d,
+				p->next ? ", " : "");
+		p = p->next;
+	}
+	cnt += sprintf(buf + cnt, "}");
+
+	return buf;
+}
+
+void pt_free(struct pt ** old) {
+	size_t i;
+	printf("pt_free(%ld, %ld)\n", (*old)->c, (*old)->d);
+	if (old && *old) {
+		for (i = 0; i < (*old)->kidcount; ++i) {
+			pt_free(&(*old)->kids[i]);
+		}
+	}
+	free(*old);
+	old = NULL;
+}
+
+char * pt_str(struct pt * t) {
+	static char buf[_1K];
+	static struct {
+		struct pt * t;
+		size_t i;
+	} stack[_1K];
+	size_t i, j, cnt = 0;
+	int sp = 0;
+
+	stack[sp].t = t;
+	stack[sp].i = 0;
+
+	while (sp >= 0) {
+		// leaf
+		if (stack[sp].t->kids == NULL) {
+			for (j = 0; j < sp; ++j) {
+				cnt += sprintf(buf + cnt, "    ");
+			}
+			for (i = 0; i < t->kidcount; ++i) {
+				cnt += sprintf(buf + cnt, "(%02lu, %02lu)%s",
+						stack[sp].t->c, stack[sp].t->d,
+						i == stack[sp].t->kidcount - 1 ? "\n" : ", ");
+			}
+			// leaf was printed
+			--sp;
+		} else {
+			// unprocessed kids
+			if (stack[sp].i < stack[sp].t->kidcount) {
+				// push next kid into stack to process its kids
+				stack[sp + 1].t = stack[sp].t->kids[stack[sp].i++];
+				stack[++sp].i = 0;
+			// all kids are processed
+			} else {
+				for (j = 0; j < sp; ++j) {
+					cnt += sprintf(buf + cnt, "    ");
+				}
+				cnt += sprintf(buf + cnt, "(%02lu, %02lu)\n",
+						stack[sp].t->c, stack[sp].t->d);
+				--sp;
+			}
+		}
+
+		// non-leaf
+		/* } else for (i = 0; i < stack[sp]->kidcount; ++i) { */
+			// leaf was cleared
+			/* if (stack[sp] == NULL) { */
+				
+			/* // new leaves to clear */
+			/* } else { */
+				
+			/* } */
+
+	}
+	
+
+	return buf;
+}
+
+
+
+void NfDtr(Nf ** old) {
+	if ((*old)->t) {
+		pt_free(&(*old)->t);
+	}
+	DefDtr(Nf)(old);
+}
+// dfa, altenative tranitions
+Nf * NfCtr(size_t n, ...) {
+	size_t i, j;
+	Nf * new;
+	va_list list;
+	if (n != 2) {
+		printf("%s: bad argc\n", __func__);
+		return NULL;
+	}
+	CtrBoiler(Nf);
+
+	va_start(list, n);
+	new->d = va_arg(list, Df *);
+	new->o = va_arg(list, struct ekvl **);
+	va_end(list);
+
+	memset(new->altv, 0, 2 * sizeof(struct altv) * ALTVLEN);
+
+	size_t vl = new->d->s->g->v + 1;
+	struct ekv * e;
+	for (i = 1; i < vl; ++i) for (j = 1; j < vl; ++j) {
+	/* for_each(Ed, e, new->d->s->g->e) { */
+		/* printf("process edge: (%lu,%lu)->(%lu,%lu)\n", e->from, e->key, e->to, e->data); */
+		e = EMAP(new->d->s, i, j);
+		printf("(%lu,%lu) e-v:%lu\n", i, j, e->v);
+		ekvl_append(new->o + i * vl + j,
+				(struct ekv){ .v = e->v, .d = e->d });
+	}
+	new->d->s->alt = new->o;
+
+	new->_d = NfDtr;
+
+	return new;
+}
+
+#define MkNf NfCtr
+
+
 
 // Turing machine
 Struct(Tm,
@@ -464,6 +768,7 @@ int main(void) {
 	/* 	printf("e: from %lu on %lu goto %lu do %lu\n", ea->from, ea->key, ea->to, ea->data); */
 	/* } */
 
+
 	UL vmax = 2;
 	Gr * g = MkGr(2, vmax, el);
 
@@ -471,21 +776,28 @@ int main(void) {
 
 	printf("%s\n", Sm_str(s));
 
-	/* UL x = Sm_do(s, 3); */
-	/* printf("got: %lu\n", x); */
-
-	/* printf("%s\n", Sm_str(s)); */
-
 	UL accept = 2;
 	Df * d = MkDf(3, s, "test", Df_mkmask(&accept, 1));
+
+	struct ekvl ** ekvl = Df_mkekvl(d, 1, MkEd(4, 1,1,1,0));
 
 	UL input[] = {1, 2, 2};
 	/* UL input[] = {1, 1, 2}; */
 	Df_run(d, input, 3);
 
+	Nf * n = MkNf(2, d, ekvl);
+
+	printf("%s\n", Sm_str(n->d->s));
+
+	Nf_run(n, input, 3);
+
 	/* Rm(g); */
 
-	Rm(d);
+	/* Rm(d); */
+
+	printf("pt:\n%s", pt_str(n->t));
+
+	Rm(n);
 
 	/* RmList(Ed)(&el); */
 
