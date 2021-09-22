@@ -495,6 +495,8 @@ int Nf_run(Nf * nf, UL *s, size_t n) {
 	root->parent = NULL;
 	root->kidcap = KIDCAP_DEFAULT;
 	root->kids = (struct pt **)malloc(sizeof(struct pt *) * root->kidcap);
+		/* static int bar= 0; */
+		/* printf("bar: %d\n", bar++); */
 	if (!root->kids) {
 		return -1;
 	}
@@ -502,7 +504,7 @@ int Nf_run(Nf * nf, UL *s, size_t n) {
 
 	/* curr = root; */
 	memset(nf->altv, 0, 2 * ALTVLEN * sizeof(struct altv));
-	nf->altv[xXx][0].c = s[0];
+	nf->altv[xXx][0].c = nf->d->s->s;
 	nf->altv[xXx][0].t = &root;
 	nf->altc[xXx] = 1;
 	nf->altc[xXx ^ 1] = 0;
@@ -533,6 +535,7 @@ int Nf_run(Nf * nf, UL *s, size_t n) {
 					}
 				}
 
+
 				// add a new child to the current tree and reference it in the new altv
 				if (!(curr->kids[curr->kidcount] =
 							(struct pt *)malloc(sizeof(struct pt)))) {
@@ -544,35 +547,43 @@ int Nf_run(Nf * nf, UL *s, size_t n) {
 				(*new->t)->kidcap = KIDCAP_DEFAULT;
 				(*new->t)->kids = (struct pt **)malloc(sizeof(struct pt *)
 						* (*new->t)->kidcap);
+				/* static int foo = 0; */
+				/* printf("foo: %d\n", foo++); */
 				(*new->t)->kidcount = 0;
 				(*new->t)->c = trans->data.v;
 				(*new->t)->d = trans->data.d;
 
+				printf("delta(%lu, %lu) includes (%lu, %lu)\n",
+						nf->altv[xXx][j].c, curr->c,
+						(*new->t)->c, (*new->t)->d);
+
+
 				++nf->altc[xXx ^ 1];
 			}
-			// reset current alt{v,c}
-			memset(nf->altv + xXx, 0, ALTVLEN * sizeof(struct altv));
-			nf->altc[xXx] = 0;
-			xXx ^= 1; //switch alt{v,c} to the other one
 		}
+		// reset current alt{v,c}
+		memset(nf->altv + xXx, 0, ALTVLEN * sizeof(struct altv));
+		nf->altc[xXx] = 0;
+		xXx ^= 1; //switch alt{v,c} to the other one
 	}
 
 	res = 1;
 	for (i = 0; i < nf->altc[xXx]; ++i) {
-		if (!(nf->d->a & (1 << nf->altv[xXx][i].c))) {
+		if (nf->d->a & (1 << nf->altv[xXx][i].c)) {
 			res = 0;
 		}
 	}
 
 	nf->t = root;
 
-	printf("%s\n", res ? "ACCEPT" : "REJECT");
+	printf("%s\n", !res ? "ACCEPT" : "REJECT");
 	return res;
 }
 
 
 int ekvl_append(struct ekvl ** l, struct ekv d) {
 	struct ekvl **p, *new = (struct ekvl *)malloc(sizeof(struct ekvl));
+	memset(new, 0, sizeof(struct ekvl));
 	if (!new) {
 		return -1;
 	}
@@ -598,7 +609,12 @@ struct ekvl ** Df_mkekvl(Df * d, size_t n, ...) {
 	if (!new) {
 		return NULL;
 	}
-	memset(new, 0, sizeof(struct ekvl *) * vl * vl);
+	/* memset(new, 0UL, sizeof(struct ekvl *) * vl * vl); */
+	for (i = 0; i < vl * vl; ++i) {
+		new[i] = NULL;
+	}
+	/* printf("!!!!!%p\n", new[8]); */
+	/* exit(1); */
 	va_start(list, n);
 	for (i = 1; i <= n; ++i) {
 		e = va_arg(list, Ed *);
@@ -608,6 +624,24 @@ struct ekvl ** Df_mkekvl(Df * d, size_t n, ...) {
 	va_end(list);
 
 	return new;
+}
+
+void ekvl_free(struct ekvl *** old, size_t len) {
+	size_t i;
+
+	struct ekvl ** ekvl = * old;
+	struct ekvl * head, *tmp;
+
+	for (i = 0; i < len; ++i) {
+		if (ekvl[i]) for (head = ekvl[i]; head;) {
+			tmp = head->next;
+			free(head);
+			head = tmp;
+		}
+	}
+
+	free(*old);
+	*old = NULL;
 }
 
 char * ekvl_str(struct ekvl * ekvl) {
@@ -629,11 +663,12 @@ char * ekvl_str(struct ekvl * ekvl) {
 
 void pt_free(struct pt ** old) {
 	size_t i;
-	printf("pt_free(%ld, %ld)\n", (*old)->c, (*old)->d);
 	if (old && *old) {
 		for (i = 0; i < (*old)->kidcount; ++i) {
 			pt_free(&(*old)->kids[i]);
 		}
+		free((*old)->kids);
+		(*old)->kids = NULL;
 	}
 	free(*old);
 	old = NULL;
@@ -645,7 +680,7 @@ char * pt_str(struct pt * t) {
 		struct pt * t;
 		size_t i;
 	} stack[_1K];
-	size_t i, j, cnt = 0;
+	size_t i, cnt = 0;
 	int sp = 0;
 
 	stack[sp].t = t;
@@ -653,15 +688,17 @@ char * pt_str(struct pt * t) {
 
 	while (sp >= 0) {
 		// leaf
-		if (stack[sp].t->kids == NULL) {
-			for (j = 0; j < sp; ++j) {
+		if (stack[sp].t->kidcount == 0) {
+			for (i = 0; (int)i < sp; ++i) {
 				cnt += sprintf(buf + cnt, "    ");
 			}
-			for (i = 0; i < t->kidcount; ++i) {
-				cnt += sprintf(buf + cnt, "(%02lu, %02lu)%s",
-						stack[sp].t->c, stack[sp].t->d,
-						i == stack[sp].t->kidcount - 1 ? "\n" : ", ");
-			}
+			cnt += sprintf(buf + cnt, "(%02lu, %02lu) (leaf)\n",
+					stack[sp].t->c, stack[sp].t->d);
+			/* for (i = 0; i < stack[sp].t->kidcount; ++i) { */
+			/* 	cnt += sprintf(buf + cnt, "(%02lu, %02lu)%s", */
+			/* 			stack[sp].t->c, stack[sp].t->d, */
+			/* 			i == stack[sp].t->kidcount - 1 ? " (leaf)\n" : ", "); */
+			/* } */
 			// leaf was printed
 			--sp;
 		} else {
@@ -672,7 +709,7 @@ char * pt_str(struct pt * t) {
 				stack[++sp].i = 0;
 			// all kids are processed
 			} else {
-				for (j = 0; j < sp; ++j) {
+				for (i = 0; (int)i < sp; ++i) {
 					cnt += sprintf(buf + cnt, "    ");
 				}
 				cnt += sprintf(buf + cnt, "(%02lu, %02lu)\n",
@@ -680,16 +717,6 @@ char * pt_str(struct pt * t) {
 				--sp;
 			}
 		}
-
-		// non-leaf
-		/* } else for (i = 0; i < stack[sp]->kidcount; ++i) { */
-			// leaf was cleared
-			/* if (stack[sp] == NULL) { */
-				
-			/* // new leaves to clear */
-			/* } else { */
-				
-			/* } */
 
 	}
 	
@@ -703,6 +730,8 @@ void NfDtr(Nf ** old) {
 	if ((*old)->t) {
 		pt_free(&(*old)->t);
 	}
+	ekvl_free(&(*old)->o, ((*old)->d->s->g->v + 1) * ((*old)->d->s->g->v + 1));
+	Rm((*old)->d);
 	DefDtr(Nf)(old);
 }
 // dfa, altenative tranitions
@@ -729,7 +758,7 @@ Nf * NfCtr(size_t n, ...) {
 	/* for_each(Ed, e, new->d->s->g->e) { */
 		/* printf("process edge: (%lu,%lu)->(%lu,%lu)\n", e->from, e->key, e->to, e->data); */
 		e = EMAP(new->d->s, i, j);
-		printf("(%lu,%lu) e-v:%lu\n", i, j, e->v);
+		/* printf("(%lu,%lu) e-v:%lu\n", i, j, e->v); */
 		ekvl_append(new->o + i * vl + j,
 				(struct ekv){ .v = e->v, .d = e->d });
 	}
@@ -781,15 +810,15 @@ int main(void) {
 
 	struct ekvl ** ekvl = Df_mkekvl(d, 1, MkEd(4, 1,1,1,0));
 
-	UL input[] = {1, 2, 2};
+	UL input[] = {1, 1};
 	/* UL input[] = {1, 1, 2}; */
-	Df_run(d, input, 3);
+	Df_run(d, input, 2);
 
 	Nf * n = MkNf(2, d, ekvl);
 
 	printf("%s\n", Sm_str(n->d->s));
 
-	Nf_run(n, input, 3);
+	Nf_run(n, input, 2);
 
 	/* Rm(g); */
 
