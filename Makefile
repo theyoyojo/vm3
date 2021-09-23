@@ -4,14 +4,17 @@
 
 CC 	= gcc
 CFLAGS  = -gdwarf-4 -Wall --std=gnu11
-OBJECTS = main.o sm.o dfa.o nf.o tm.o
+OBJECTS = sm.o dfa.o nf.o tm.o
 BIN	= app
 
-all: $(OBJECTS)
-	$(CC) $(CFLAGS) $(OBJECTS) -o $(BIN)
+all: $(BIN)
 
-%.tmb: %.tm.c $(OBJECTS)
-	$(CC) $(CFLAGS) $(OBJECTS) $^ -o $@
+$(BIN): $(OBJECTS) main.o
+	$(CC) $(CFLAGS) $^ -o $@
+
+%.tmb: %.tm.o $(OBJECTS)
+	$(CC) $(CFLAGS) $^ -o $@
+
 
 %.tm.c: %.tm
 	cat $^ | ./parse.awk >> $@
@@ -24,4 +27,4 @@ all: $(OBJECTS)
 
 .PHONEY: clean
 clean:
-	rm -rf $(BIN) $(OBJECTS)
+	rm -rf $(BIN) $(OBJECTS) *.tm.c *.tmb main.o

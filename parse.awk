@@ -35,7 +35,7 @@ function edgify(data) {
 	match(data, /([0-9]*)( |\t|\n)*(L|R|X)+.*$/, matches) 
 	# printf "%s %s\n", matches[1], matches[3]
 	# split(data, args, " ")
-	mktmdat = "Mktmdata(" matches[1] "," matches[3] ")"
+	mktmdat = "MkTmdat(" matches[1] "," matches[3] ")"
 	gsub(/[0-9]*(\t| |\n)*(L|R|X)+(\t| |\n)*$/, mktmdat, data)
 	# for (i in args) {
 	# 	defs = args[i] " "
@@ -84,7 +84,7 @@ function mainify(tmgen) {
 		"\tstruct tmgen tg = %s;\n"		\
 		"\tTm * t = Tm_gen(&tg);\n"		\
 		"\tret = Tm_run(t);\n\n"		\
-		"\treturn 0;\n}\n"
+		"\treturn ret;\n}\n"
 
 	return sprintf(main, tmgen)
 }
