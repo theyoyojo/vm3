@@ -4,7 +4,7 @@
 
 CC 	= gcc
 CFLAGS  = -gdwarf-4 -Wall --std=gnu11
-OBJECTS = main.o
+OBJECTS = main.o sm.o dfa.o nf.o tm.o
 BIN	= app
 
 all: $(OBJECTS)
