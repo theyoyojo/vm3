@@ -261,17 +261,31 @@ Tp * 		TpCtr		(size_t n, ...);
 #define MkTp 	TpCtr
 void 		TpDtr		(Tp ** old);
 
+typedef enum Tmstate {
+	HALT_START,
+	HALT_ACCEPT,
+	HALT_REJECT,
+	HALT_ERROR,
+	RUNNING,
+	TMSTATECOUNT,
+} Tmstate;
+
+const char * 	Tmstate_str	(Tmstate st);
+
 // Turing machine
 DeclStruct(Tm,
 	Df * d;
 	Tp * t;
 	UL r;
+	Tmstate s;
+	int v;
 );
 Tm * 		TmCtr		(size_t n, ...);
 #define MkTm 	TmCtr
 void 		TmDtr		(Tm ** old);
 char * 		Tm_str		(Tm * t);
 int 		Tm_run		(Tm * tm);
+
 
 struct tmgen {
 	Tp * tape;
@@ -286,6 +300,14 @@ struct tmgen {
 static inline Tm * Tm_gen(struct tmgen * g) {
 	return MkTm(2, g->tape, MkDf(3, MkSm(2, MkGr(2, g->vertices, g->edges),
 		    g->start), g->name, g->acceptmask), g->rejectmask);
+}
+
+static inline const char * Tm_name(Tm * t) {
+	return t->d->n;
+}
+
+static inline void Tm_setverbose(Tm * t, int x) {
+	t->v = x;
 }
 
 

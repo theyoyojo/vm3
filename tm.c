@@ -92,6 +92,7 @@ Tm * TmCtr(size_t n, ...) {
 
 	new->_d = TmDtr;
 	new->d->s->tmdat = 1;
+	new->v = 0;
 	return new;
 }
 
@@ -106,7 +107,10 @@ char * Tm_str(Tm * t) {
 	UL cnt = 0, i;
 	int firstchar;
 	
-	cnt += sprintf(buf, "Turing machine \"%s\"\nTape: ", t->d->n);
+	cnt += sprintf(buf, "Turing machine \"%s\"\n", t->d->n);
+	cnt += sprintf(buf + cnt, "Machine state: %s\n", Tmstate_str(t->s));
+
+	cnt += sprintf(buf + cnt, "Tape: ");
 	for (i = 0; i < t->t->n; ++i) {
 		cnt += sprintf(buf + cnt, "[%03lu]%s", t->t->t[i], i == t->t->n - 1 ? "\n" : " ");
 	}
@@ -150,6 +154,30 @@ static int Tm_rejects(Tm * tm) {
 
 #define PANICNUMBER (1UL << 8)
 
+static const char * Tmstate_strtab[TMSTATECOUNT] = {
+	[HALT_START] 	= "HALT START",
+	[HALT_ACCEPT] 	= "HALT ACCEPT",
+	[HALT_REJECT] 	= "HALT REJECT",
+	[HALT_ERROR] 	= "HALT ERROR",
+	[RUNNING]	= "RUNNING",
+};
+
+const char * Tmstate_str(Tmstate st) {
+	return Tmstate_strtab[st];
+}
+
+// check if (Tm.State ∈  Tm.Accept U Tm.reject)
+Tmstate Tm_updatestate(Tm * t) {
+	if (Tm_accepts(t)) {
+		t->s = HALT_ACCEPT;
+	} else if (Tm_rejects(t)) {
+		t->s = HALT_REJECT;
+	} else {
+		t->s = RUNNING;
+	}
+	return t->s;
+}
+
 // 0 accept
 int Tm_run(Tm * tm) {
 	// acceptance and rejection are disjoint
@@ -164,11 +192,16 @@ int Tm_run(Tm * tm) {
 		return -1;
 	}
 
-	int accepts, rejects;
+	printf("RUN Turing Machine %s\n", Tm_name(tm));
+
+	if (tm->v) {
+		printf("%s\n", Tm_str(tm));
+	}
+
 	size_t tpos = 0, i = 0;
 	Tmdat code;
 
-	while (!(accepts = Tm_accepts(tm)) && !(rejects = Tm_rejects(tm)) && i++ < PANICNUMBER) {
+	while (Tm_updatestate(tm) == RUNNING && i++ < PANICNUMBER) {
 		code = (Tmdat)Sm_do(tm->d->s, *tm->t->h);
 		printf("(%lu) LOAD Tape[%lu] = %s\n", i, tpos, Tmdat_str(code));
 
@@ -188,10 +221,18 @@ int Tm_run(Tm * tm) {
 			break;
 		}
 
-		printf("%s", Tm_str(tm));
+		if (tm->v) {
+			printf("%s\n", Tm_str(tm));
+		}
+
+		Tm_updatestate(tm);
 	}
 
-	printf("HALT %s %s\n", accepts ? "ACCEPT" : (rejects ? "REJECT" : "WTF"), tm->d->n);
+	if (i >= PANICNUMBER) {
+		tm->s = HALT_ERROR;
+	}
 
-	return (accepts ? 0 : ( rejects ? 1 : -1 ));
+	printf("%s %s\n", Tmstate_str(tm->s), tm->d->n);
+
+	return (Tm_accepts(tm) ? 0 : ( Tm_rejects(tm) ? 1 : -1 ));
 }

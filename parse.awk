@@ -30,16 +30,9 @@ function getfunc(id) {
 }
 
 function edgify(data) {
-	# gsub(/^( |\n|\t)*Edge( |\t|\n)*/, "", data);
-	# print data
 	match(data, /([0-9]*)( |\t|\n)*(L|R|X)+.*$/, matches) 
-	# printf "%s %s\n", matches[1], matches[3]
-	# split(data, args, " ")
 	mktmdat = "MkTmdat(" matches[1] "," matches[3] ")"
 	gsub(/[0-9]*(\t| |\n)*(L|R|X)+(\t| |\n)*$/, mktmdat, data)
-	# for (i in args) {
-	# 	defs = args[i] " "
-	# }
 	return cify_var(functab["Edge"], data)
 }
 
@@ -47,7 +40,7 @@ function tmgenify() {
 
 	tmgenfmt = "(struct tmgen){\n" 	\
 		"\t\t.tape = %s,\n" 		\
-		"\t\t.edges = MkList(Ed)(%d,\n"	\
+		"\t\t.edges = MkList(Ed)(%d%s"	\
 			"%s),\n" 		\
 		"\t\t.vertices = %d,\n" 	\
 		"\t\t.start = %d,\n" 		\
@@ -56,25 +49,30 @@ function tmgenify() {
 		"\t\t.name = %s,\n" 		\
 	"\t}"
 
-	for (i in edges) {
-		if (i < length(edges) - 1) {
-			elist = elist "\t\t" edges[i] ",\n"
-		} else {
-			elist = elist "\t\t" edges[i]
+	if (length(edges) > 0) {
+		prefix = ",\n"
+		for (i in edges) {
+			if (i < length(edges) - 1) {
+				elist = elist "\t\t" edges[i] ",\n"
+			} else {
+				elist = elist "\t\t" edges[i]
+			}
 		}
+	} else {
+		prefix = ""
+		elist = ""
 	}
 
 	return sprintf(tmgenfmt,
 		inputs["Tape"],
 		length(edges),
+		prefix,
 		elist,
 		inputs["Vertices"],
 		inputs["Start"],
 		inputs["Accept"],
 		inputs["Reject"],
 		inputs["Name"])
-
-
 }
 
 function mainify(tmgen) {
@@ -83,20 +81,21 @@ function mainify(tmgen) {
 		"\tint ret;\n"				\
 		"\tstruct tmgen tg = %s;\n"		\
 		"\tTm * t = Tm_gen(&tg);\n"		\
+		"\tTm_setverbose(t, %s);\n"		\
 		"\tret = Tm_run(t);\n\n"		\
 		"\treturn ret;\n}\n"
 
-	return sprintf(main, tmgen)
+	return sprintf(main, tmgen, inputs["Verbose"])
 }
 
 BEGIN {
-	# print foo();
 	RS=";"
 	inputs["Tape"] = ""
 	inputs["Accept"] = ""
 	inputs["Reject"] = ""
 	inputs["Start"] = ""
 	inputs["Vertices"] = ""
+	inputs["Verbose"] = "0"
 	# declare edges as empty array
 	delete edges[0]
 }
@@ -107,20 +106,16 @@ $1 ~ /Tape|Accept|Reject/ { inputs[$1] = cify_var(getfunc($1), $0) }
 
 $1 ~ /Start|Vertices/ { inputs[$1] = $2 }
 
+$1 ~ /Verbose/ { inputs[$1] = "1" }
+
 $1 ~ /Name/ {
 	gsub(/^( |\n|\t)*Name( |\t|\n)*/, "", $0);
+	gsub(/\n/, "\\n", $0)
 	inputs["Name"] = "\"" $0 "\"";
 }
 
 $1 ~ /Edge/ { edges[length(edges)] = edgify($0) }
 
 END {
-	# for (i in inputs) {
-	# 	printf "%s: %s\n", i, inputs[i]
-	# }
-	# for (i in edges) {
-	# 	printf "E%d: %s\n", i, edges[i]
-	# }
-
 	printf "%s\n", mainify(tmgenify())
 }
