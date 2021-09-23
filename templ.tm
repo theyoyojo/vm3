@@ -41,7 +41,7 @@ Accept 2;
 Reject;
 
 # Edge <vert> <vert> <int> <int> <op>
-# Specify zero  or more edges
+# Specify zero or more edges
 # NOTE: writing zeros to the tape is not implemented;
 Edge 1 1 3 4 R;
 Edge 1 2 1 0 L;
