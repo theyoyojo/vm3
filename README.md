@@ -11,13 +11,13 @@ make templ.tmb
 Take a look at the file to get an idea of how to write arbitrary turing machines:
 
 ```
-
 # Template Turing Machine definition
 
-# Brief definition of language:
+# Brief definition of language: (~ means matches regex)
 # <empty> ~ /^$/
 # <text> ~ /^.*$/
 # <int> ~ /^[0-9]*$/
+# <ints> := <ints> <int> | <int>
 # MaxVert := <int>
 # <vert> := 0 < <int> <= MaxVert
 # <verts> := <verts> <vert> | <vert>
@@ -25,39 +25,43 @@ Take a look at the file to get an idea of how to write arbitrary turing machines
 # <op> ~ /^(L|R|X)+$/
 #;
 
-# Name <text>
+# <Name> := Name <text>
 # Specify the name of the turing machine in ascii;
 Name an example
 of a turing machine;
 
-# Verbose <empty>
+# <Verbose> := Verbose <empty>
 # (optional) Specify that the machine should print more output to stdin;
 Verbose;
 
-# Vertices $MaxVert
+# <Vertices> := Vertices $MaxVert
 # Specify the maximum vertex ID. Defines all vertices 1..$MaxVert as valid;
 Vertices 3;
 
-# Tape <ints>
+# <Tape> := Tape <ints>
 # Specify the initial state of the machine tape with an arbitrary list of integers;
 Tape 3 1;
 
-# Start <vert>
+# <Start> := Start <vert>
 # Specify the start state for the state machine;
 Start 1;
 
-# Accept <verts?>
+# <Accept> := Accept <verts?>
 # Specify a list of zero or more accepting states that halt the turing machine;
 Accept 2;
 
-# Reject <verts?>
+# <Reject> := Reject <verts?>
 # Specify a list of zero or more rejecting states that halt the turing machine;
 Reject;
 
-# Edge <vert> <vert> <int> <int> <op>
+# <Edge> := Edge <vert> <vert> <int> <int> <op>
 # Specify zero or more edges
 # NOTE: writing zeros to the tape is not implemented;
 Edge 1 1 3 4 R;
 Edge 1 2 1 0 L;
 Edge 1 3 2 1 R;
+
+# <def> := <Name> | <Verbose> | <Vertices> | <Tape> | <Start> | <Accept> | <Reject> | <Edge>
+# <statement> := <def> ;
+# <program> := <program> <statement> | <statement>
 ```
