@@ -13,8 +13,7 @@ int main(void) {
 	EdList * el = MkList(Ed)(2, MkEd(4,1,2,1,1), MkEd(4,2,1,1,1));
 	Gr * g = MkGr(2, vmax, el);
 	Sm * s = MkSm(2, g, 1);
-	Df * d = MkDf(3, s, "test", Df_mkmask(1, 2));
-	Ekvl * ekvl = MkEkvl(d->s->g->v, 1, MkEd(4, 1,1,1,0));
+	Df * d = MkDf(3, s, "test", Mkmask(1, 2)); Ekvl * ekvl = MkEkvl(d->s->g->v, 1, MkEd(4, 1,1,1,0));
 	UL input[] = {1, 1};
 	Df_run(d, input, sizeof(input)/sizeof(*input));
 
@@ -32,8 +31,8 @@ int main(void) {
 			MkEd(4,1,2,1,MkTmdat(3, R))),
 		.vertices = 2,
 		.start = 1,
-		.acceptmask = Df_mkmask(0),
-		.rejectmask = Df_mkmask(1,2),
+		.acceptmask = Mkmask(0),
+		.rejectmask = Mkmask(1,2),
 		.name = "TM test2",
 	};
 

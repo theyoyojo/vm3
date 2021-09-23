@@ -10,8 +10,17 @@ BIN	= app
 all: $(OBJECTS)
 	$(CC) $(CFLAGS) $(OBJECTS) -o $(BIN)
 
+%.tmb: %.tm.c $(OBJECTS)
+	$(CC) $(CFLAGS) $(OBJECTS) $^ -o $@
+
+%.tm.c: %.tm
+	cat $^ | ./parse.awk >> $@
+
+
 %.o: %.c
 	$(CC) $(CFLAGS) -c $^ -o $@
+
+
 
 .PHONEY: clean
 clean:

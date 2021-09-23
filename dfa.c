@@ -34,7 +34,7 @@ void DfDtr(Df ** old) {
 }
 
 // realistically when will I need more than 64-1 states? I can always change this later
-UL Df_mkmask(size_t n, ...) {
+UL Mkmask(size_t n, ...) {
 	va_list list;
 	size_t i;
 	UL res = 0, tmp;

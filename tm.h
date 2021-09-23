@@ -81,8 +81,6 @@ T * GetList##T(T##List * l, size_t n) { \
 	return NULL;			\
 }
 
-
-
 #define MkList(T) 	CtrList##T
 #define RmList(T) 	DtrList##T
 #define GL(T) 		GetList##T
@@ -202,7 +200,7 @@ DeclStruct(Df,
 Df * 		DfCtr		(size_t n, ...);
 #define MkDf 	DfCtr
 void 		DfDtr		(Df ** old);
-UL 		Df_mkmask	(size_t n, ...);
+UL 		Mkmask		(size_t n, ...);
 int 		Df_run		(Df * d, UL * s, size_t n);
 
 struct ekvl;
