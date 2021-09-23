@@ -2,9 +2,13 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdarg.h>
 
-typedef unsigned long UL;
+typedef uint64_t UL;
+typedef uint32_t UI;
+
+#define _1K (1UL << 10)
 
 #define ASSERT(__x) assert(__x)
 
@@ -250,12 +254,6 @@ Gr * GrCtr(size_t n, ...) {
 
 
 
-// Tape
-Struct(Tp,
-	UL * t;
-	size_t n;
-);
-
 // State machine
 Struct(Sm,
 	Gr * g;
@@ -268,6 +266,7 @@ Struct(Sm,
 	} *m;
 
 	struct ekvl ** alt;
+	int tmdat;
 );
 
 #define EMAP(_s, _v, _k) (((_s)->m) + ((_s)->g->v + 1) * (_v) + (_k))
@@ -284,7 +283,7 @@ Sm * SmCtr(size_t n, ...) {
 	va_list list;
 	size_t i, j;
 
-	if (n != 3) {
+	if (n != 2) {
 		printf("%s: bad argc\n", __func__);
 		return NULL;
 	}
@@ -319,6 +318,7 @@ Sm * SmCtr(size_t n, ...) {
 
 
 	new->_d = SmDtr;
+	new->tmdat = 0;
 
 	return new;
 }
@@ -348,9 +348,34 @@ struct ekvl {
 };
 char * ekvl_str(struct ekvl * ekvl);
 
-#define _1K (1 << 10)
-char buf[_1K];
+enum Tmop { X=0, L=1, R=2 };
+
+char * Tmop_strtab[] = {
+	[X] = "No-op",
+	[L] = "Left",
+	[R] = "Right",
+};
+
+typedef union Tmdat {
+	struct {
+		enum Tmop op;
+		UI dat;
+	};
+	UL data;
+} Tmdat;
+
+static inline Tmdat MkTmdat(enum Tmop op, UI dat) {
+	return (Tmdat){ .op = op, .dat = dat };
+}
+
+char * Tmdat_str(Tmdat d) {
+	static char buf[_1K];
+	sprintf(buf, "{%d, %s}", d.dat, Tmop_strtab[d.op]);
+	return buf;
+}
+
 char * Sm_str(Sm * s) {
+	static char buf[_1K];
 	size_t i, j, cnt = 0;
 	struct ekv * tmp;
 	cnt += sprintf(buf, "Sm.p=%lu\n", s->p);
@@ -358,7 +383,11 @@ char * Sm_str(Sm * s) {
 	for (i = 1; i <= s->g->v; ++i) {
 		cnt += sprintf(buf + cnt, "[%lu] ", i);
 		for (j = 1; j <= s->g->v; ++j) {
-			if (!s->alt) {
+			if (s->tmdat) {
+				tmp = EMAP(s, i, j);
+				cnt += sprintf(buf + cnt, "%lu->(%lu, %s) ",
+						j, tmp->v, Tmdat_str((Tmdat)tmp->d));
+			} else if (!s->alt) {
 				tmp = EMAP(s, i, j);
 				cnt += sprintf(buf + cnt, "%lu->(%lu, %lu) ", j, tmp->v, tmp->d);
 			} else {
@@ -380,15 +409,20 @@ Struct (Df,
 );
 // realistically when will I need more than 64-1 states? I can always change this later
 
-UL Df_mkmask(UL * a, size_t n) {
+UL Df_mkmask(size_t n, ...) {
+	va_list list;
 	size_t i;
-	UL res = 0;
+	UL res = 0, tmp;
+
+	va_start(list, n);
 	for (i = 0; i < n; i++) {
-		if (a[i] > sizeof(UL) * 8) {
+		if ((tmp = va_arg(list, UL)) > sizeof(UL) * 8) {
 			return -1;
 		}
-		res |= 1 << a[i];
+		res |= (1UL << tmp);
 	}
+	va_end(list);
+
 	return res;
 }
 
@@ -400,7 +434,7 @@ int Df_run(Df * d, UL * s, size_t n) {
 
 	if (n < 1) {
 		// if empty input, accept if start is an accept state
-		return !(d->a & (1 << d->s->s));
+		return !(d->a & (1UL << d->s->s));
 	}
 
 	printf("RUN DFA %s\n", d->n);
@@ -412,7 +446,7 @@ int Df_run(Df * d, UL * s, size_t n) {
 	}
 
 	// check for accept state
-	res = !(d->a & (1 << d->s->p));
+	res = !(d->a & (1UL << d->s->p));
 	printf("%s\n", !res ? "ACCEPT" : "REJECT");
 	return res;
 }
@@ -478,7 +512,7 @@ Struct(Nf,
 int Nf_run(Nf * nf, UL *s, size_t n) {
 	if (n < 1) {
 		// if empty input, accept if start is an accept state
-		return !(nf->d->a & (1 << nf->d->s->s));
+		return !(nf->d->a & (1UL << nf->d->s->s));
 	}
 
 	int res, xXx = 0;
@@ -569,7 +603,7 @@ int Nf_run(Nf * nf, UL *s, size_t n) {
 
 	res = 1;
 	for (i = 0; i < nf->altc[xXx]; ++i) {
-		if (nf->d->a & (1 << nf->altv[xXx][i].c)) {
+		if (nf->d->a & (1UL << nf->altv[xXx][i].c)) {
 			res = 0;
 		}
 	}
@@ -734,7 +768,8 @@ void NfDtr(Nf ** old) {
 	Rm((*old)->d);
 	DefDtr(Nf)(old);
 }
-// dfa, altenative tranitions
+
+// args: dfa, altenative tranitions list made from dfa (ekvl)
 Nf * NfCtr(size_t n, ...) {
 	size_t i, j;
 	Nf * new;
@@ -771,21 +806,216 @@ Nf * NfCtr(size_t n, ...) {
 
 #define MkNf NfCtr
 
+// Tape
+Struct(Tp,
+	UL * t;
+	size_t n;
+	UL * h;
+	size_t p;
+);
 
+void TpDtr(Tp ** old) {
+	free((*old)->t);
+	DefDtr(Tp)(old);
+}
+
+Tp * TpCtr(size_t n, ...) {
+	va_list list;
+	size_t i;
+	UL * data = NULL ;
+	Tp * new;
+	CtrBoiler(Tp);
+
+	va_start(list, n);
+	if (n == 0) {
+		new->n = va_arg(list, size_t);
+		data = va_arg(list, UL *);
+	} else {
+		new->n = n;
+	}
+
+	new->t = (UL * )malloc(sizeof(UL) * new->n);
+	if (!new->t) {
+		free(new);
+		return NULL;
+	}
+
+	if (n == 0) {
+		memcpy(new->t, data, new->n);
+	} else {
+		for (i = 0; i < n; ++i) {
+			new->t[i] = va_arg(list, UL);
+		}
+	}
+
+	new->h = new->t;
+	new->p = 0;
+
+	va_end(list);
+	new->_d = TpDtr;
+
+	return new;
+}
+
+#define MkTp TpCtr
+
+void Tp_left(Tp * t) {
+	if (t->p > 0) {
+		--t->h;
+		--t->p;
+	}
+}
+
+void Tp_right(Tp * t) {
+	if (t->p >= t->n - 1) {
+		t->t = (UL *)realloc(t->t, sizeof(UL) * (++t->n));
+		if (!t->t) {
+			// panic
+			printf("panic: the tape is gone!\n");
+			exit(1);
+		}
+		t->t[t->n - 1] = 0UL;
+	}
+	++t->h;
+	++t->p;
+}
 
 // Turing machine
 Struct(Tm,
-	Tp t;
-	Sm s;
+	Df * d;
+	Tp * t;
+	UL r;
 );
 
+void TmDtr(Tm ** old) {
+	Rm((*old)->d);
+	Rm((*old)->t);
+	DefDtr(Tm)(old);
+}
+
+// args: dfa, tape, rejection bitmask
+Tm * TmCtr(size_t n, ...) {
+	va_list list;
+	Tm * new;
+	CtrBoiler(Tm);
+
+	va_start(list, n);
+
+	new->t = va_arg(list, Tp *);
+	new->d = va_arg(list, Df *);
+	new->r = va_arg(list, UL);
+
+	va_end(list);
+
+	new->_d = TmDtr;
+	new->d->s->tmdat = 1;
+	return new;
+}
+
+#define MkTm TmCtr
+
+char * Tm_str(Tm * t) {
+	static char buf[_1K];
+	UL cnt = 0, i;
+	int firstchar;
+	
+	cnt += sprintf(buf, "Turing machine \"%s\"\nTape: ", t->d->n);
+	for (i = 0; i < t->t->n; ++i) {
+		cnt += sprintf(buf + cnt, "[%03lu]%s", t->t->t[i], i == t->t->n - 1 ? "\n" : " ");
+	}
+	cnt += sprintf(buf + cnt, "      ");
+	for (i = 0; i < t->t->p; ++i) {
+		cnt += sprintf(buf + cnt, "      ");
+	}
+	cnt += sprintf(buf + cnt," ^^^\n");
+	cnt += sprintf(buf + cnt, "Tm.%s", Sm_str(t->d->s));
+	cnt += sprintf(buf + cnt, "accepts: {");
+	firstchar = 1;
+	for (i = 1; i < sizeof(UL) * 8; ++i) {
+		/* printf("t->d->a=0x%lx, i=%lu, (1<<i)=0x%lx, (cond)=0x%032lx\n", */
+		/* 		t->d->a, i, (1UL << i), (t->d->a & (1UL << i))); */
+		if (t->d->a & (1UL << i)) {
+			cnt += sprintf(buf + cnt, "%s%lu", firstchar ? "" : ", ", i);
+			firstchar = 0;
+		}
+	}
+	cnt += sprintf(buf + cnt, "}\n");
+	cnt += sprintf(buf + cnt, "rejects: {");
+	firstchar = 1;
+	for (i = 1; i < sizeof(UL) * 8; ++i) {
+		if (t->r & (1UL << i)) {
+			cnt += sprintf(buf + cnt, "%s%lu", firstchar ? "" : ", ", i);
+			firstchar = 0;
+		}
+	}
+	cnt += sprintf(buf + cnt, "}\n");
+
+	return buf;
+}
+
+int Tm_accepts(Tm * tm) {
+	return (tm->d->s->p & tm->d->a);
+}
+
+int Tm_rejects(Tm * tm) {
+	return (tm->d->s->p & tm->r);
+}
+
+#define PANICNUMBER (1 << 8)
+
+// 0 accept
+int Tm_run(Tm * tm) {
+	// acceptance and rejection are disjoint
+	if (tm->d->a & tm->r) {
+		printf("error: non-disjoint acceptance and rejection states\n");
+		return -1;
+	}
+
+	// must have some tape!
+	if (!(tm->t->n > 0)) {
+		printf("error: no tape!\n");
+		return -1;
+	}
+
+	int accepts, rejects;
+	size_t tpos = 0, i = 0;
+	Tmdat code;
+
+	while (!(accepts = Tm_accepts(tm)) && !(rejects = Tm_rejects(tm)) && i++ < PANICNUMBER) {
+		code = (Tmdat)Sm_do(tm->d->s, *tm->t->h);
+		printf("(%lu) LOAD Tape[%lu] = %s", i, tpos, Tmdat_str(code));
+
+		// Writing the blank character implements no-op (0UL)
+		if (code.dat != 0) {
+			*tm->t->h = code.dat;
+		}
+
+		switch (code.op) {
+		case L:
+			printf(" (LEFT)\n");
+			Tp_left(tm->t);
+			break;
+		case R:
+			printf(" (RIGHT)\n");
+			Tp_right(tm->t);
+		case X:
+		default:
+			printf("\n");
+			break;
+		}
+
+		printf("%s", Tm_str(tm));
+	}
+
+	return 0;
+}
 
 int main(void) {
-	Tm * t = MkTm(NULL);
-	Tm * q = Cp(t);
+	/* Tm * t = MkTm(NULL); */
+	/* Tm * q = Cp(t); */
 
-	Ed * e3 = MkEd(4,3,3,3,3);
-	Rm(e3);
+	/* Ed * e3 = MkEd(4,3,3,3,3); */
+	/* Rm(e3); */
 
 	EdList * el = MkList(Ed)(2,
 			MkEd(4,1,2,1,1),
@@ -801,12 +1031,12 @@ int main(void) {
 	UL vmax = 2;
 	Gr * g = MkGr(2, vmax, el);
 
-	Sm * s = MkSm(3, g, 1);
+	Sm * s = MkSm(2, g, 1);
 
 	printf("%s\n", Sm_str(s));
 
-	UL accept = 2;
-	Df * d = MkDf(3, s, "test", Df_mkmask(&accept, 1));
+	/* UL accept = 2; */
+	Df * d = MkDf(3, s, "test", Df_mkmask(1, 2));
 
 	struct ekvl ** ekvl = Df_mkekvl(d, 1, MkEd(4, 1,1,1,0));
 
@@ -830,8 +1060,24 @@ int main(void) {
 
 	/* RmList(Ed)(&el); */
 
-	Rm(t);
-	Rm(q);
+	/* Rm(t); */
+	/* Rm(q); */
+
+	Tm * tm = MkTm(2, MkTp(3,1,1,1),
+		MkDf(3, MkSm(2,
+			MkGr(2, 2,
+				MkList(Ed)(1, MkEd(4,1,1,1,MkTmdat(2, L))
+		    )), 1), "TM test", Df_mkmask(1,2)), Df_mkmask(0,0));
+
+	printf("%s\n", Tm_str(tm));
+
+	Tm_run(tm);
+
+	Rm(tm);
+
+	/* Tp * tp = MkTp(3,1,2,1); */
+	/* printf("tp: %p\n", tp); */
+	/* Rm(tp); */
 
 
 	return 0;
