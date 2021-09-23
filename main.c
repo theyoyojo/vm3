@@ -364,7 +364,7 @@ typedef union Tmdat {
 	UL data;
 } Tmdat;
 
-static inline Tmdat MkTmdat(enum Tmop op, UI dat) {
+static inline Tmdat MkTmdat(UI dat, enum Tmop op) {
 	return (Tmdat){ .op = op, .dat = dat };
 }
 
@@ -875,6 +875,8 @@ void Tp_right(Tp * t) {
 			exit(1);
 		}
 		t->t[t->n - 1] = 0UL;
+		// set head to tape start plus current integral position
+		t->h = t->t + t->p;
 	}
 	++t->h;
 	++t->p;
@@ -954,14 +956,14 @@ char * Tm_str(Tm * t) {
 }
 
 int Tm_accepts(Tm * tm) {
-	return (tm->d->s->p & tm->d->a);
+	return (tm->d->a & (1UL << tm->d->s->p));
 }
 
 int Tm_rejects(Tm * tm) {
-	return (tm->d->s->p & tm->r);
+	return (tm->r & (1UL << tm->d->s->p));
 }
 
-#define PANICNUMBER (1 << 8)
+#define PANICNUMBER (1UL << 8)
 
 // 0 accept
 int Tm_run(Tm * tm) {
@@ -983,7 +985,7 @@ int Tm_run(Tm * tm) {
 
 	while (!(accepts = Tm_accepts(tm)) && !(rejects = Tm_rejects(tm)) && i++ < PANICNUMBER) {
 		code = (Tmdat)Sm_do(tm->d->s, *tm->t->h);
-		printf("(%lu) LOAD Tape[%lu] = %s", i, tpos, Tmdat_str(code));
+		printf("(%lu) LOAD Tape[%lu] = %s\n", i, tpos, Tmdat_str(code));
 
 		// Writing the blank character implements no-op (0UL)
 		if (code.dat != 0) {
@@ -992,20 +994,19 @@ int Tm_run(Tm * tm) {
 
 		switch (code.op) {
 		case L:
-			printf(" (LEFT)\n");
 			Tp_left(tm->t);
 			break;
 		case R:
-			printf(" (RIGHT)\n");
 			Tp_right(tm->t);
 		case X:
 		default:
-			printf("\n");
 			break;
 		}
 
 		printf("%s", Tm_str(tm));
 	}
+
+	printf("HALT %s %s\n", accepts ? "ACCEPT" : (rejects ? "REJECT" : "WTF"), tm->d->n);
 
 	return 0;
 }
@@ -1063,11 +1064,20 @@ int main(void) {
 	/* Rm(t); */
 	/* Rm(q); */
 
-	Tm * tm = MkTm(2, MkTp(3,1,1,1),
-		MkDf(3, MkSm(2,
-			MkGr(2, 2,
-				MkList(Ed)(1, MkEd(4,1,1,1,MkTmdat(2, L))
-		    )), 1), "TM test", Df_mkmask(1,2)), Df_mkmask(0,0));
+	Tm * tm = MkTm(2,
+		MkTp(3,1,1,1), // initial tape data
+		MkDf(3, 	// embeded DFA
+			MkSm(2,		// State machine for DFA
+				MkGr(2, 2, 	// Graph for state machine with two vertices
+					MkList(Ed)(2,	// list of graph edges with key-value pairs,
+							// including Sigma X {X, L, R}
+						MkEd(4,1,2,1,MkTmdat(3, R)),
+						MkEd(4,1,2,1,MkTmdat(3, R))
+					)
+				),
+		    1),	// start state
+		"TM test", Df_mkmask(1,2) // name and acceptance state mask
+	), Df_mkmask(0,0)); // rejection state mask
 
 	printf("%s\n", Tm_str(tm));
 
