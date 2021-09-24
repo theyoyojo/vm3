@@ -221,11 +221,12 @@ int Tm_run(Tm * tm) {
 			break;
 		}
 
+		Tm_updatestate(tm);
+
 		if (tm->v) {
 			printf("%s\n", Tm_str(tm));
 		}
 
-		Tm_updatestate(tm);
 	}
 
 	if (i >= PANICNUMBER) {
